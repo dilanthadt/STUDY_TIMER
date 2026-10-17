@@ -175,6 +175,54 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
   const { main, ms } = formatCountdownWithMs(remainingSeconds);
   const isEndingSoon = timerState === 'running' && remainingSeconds > 0 && remainingSeconds <= 60;
 
+  // Calculate dynamic color transition: Green (900s) -> Yellow (450s) -> Orange/Red (60s)
+  const getTimerColorStyle = () => {
+    if (timerState === 'idle') {
+      return {
+        color: '#00ff66',
+        textShadow: '0 0 10px rgba(0, 255, 102, 0.45)',
+      };
+    }
+
+    if (isEndingSoon) {
+      return {
+        color: '#ff2244',
+        textShadow: '0 0 12px rgba(255, 34, 68, 0.6), 0 0 20px rgba(255, 34, 68, 0.4)',
+      };
+    }
+
+    // Fraction elapsed from 0 (start) to 1 (end)
+    const progress = Math.min(1, Math.max(0, (FOCUS_DURATION_SECONDS - remainingSeconds) / (FOCUS_DURATION_SECONDS - 60)));
+
+    let r = 0;
+    let g = 255;
+    let b = 102;
+
+    if (progress < 0.5) {
+      // 0 to 0.5: Green (#00ff66) -> Yellow (#ffee00)
+      const p = progress / 0.5;
+      r = Math.round(0 + (255 - 0) * p);
+      g = Math.round(255 + (238 - 255) * p);
+      b = Math.round(102 + (0 - 102) * p);
+    } else {
+      // 0.5 to 1.0: Yellow (#ffee00) -> Red (#ff2244)
+      const p = (progress - 0.5) / 0.5;
+      r = Math.round(255 + (255 - 255) * p);
+      g = Math.round(238 + (34 - 238) * p);
+      b = Math.round(0 + (68 - 0) * p);
+    }
+
+    const rgbColor = `rgb(${r}, ${g}, ${b})`;
+    const glow = `0 0 10px rgba(${r}, ${g}, ${b}, 0.5)`;
+
+    return {
+      color: rgbColor,
+      textShadow: glow,
+    };
+  };
+
+  const timerColorStyle = getTimerColorStyle();
+
   return (
     <div className={`mini-timer-section state-${timerState} ${isEndingSoon ? 'ending-soon' : ''}`}>
       {/* Title input */}
@@ -193,10 +241,20 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
         />
       </div>
 
-      {/* 15:00 Countdown Digits with Milliseconds (Blinks Neon Red when ending soon) */}
+      {/* 15:00 Countdown Digits with Milliseconds (Green -> Yellow -> Red gradient, Blinks Red at end) */}
       <div className={`mini-countdown-digits-row ${isEndingSoon ? 'blink-red' : ''}`}>
-        <span className={`countdown-main-digits ${isEndingSoon ? 'neon-red' : 'neon-yellow'}`}>{main}</span>
-        <span className={`countdown-ms-digits ${isEndingSoon ? 'neon-red-dim' : 'neon-yellow-dim'}`}>{ms}</span>
+        <span className="countdown-main-digits" style={timerColorStyle}>
+          {main}
+        </span>
+        <span
+          className="countdown-ms-digits"
+          style={{
+            ...timerColorStyle,
+            opacity: 0.75,
+          }}
+        >
+          {ms}
+        </span>
       </div>
 
       {/* Mini Controls */}
@@ -205,7 +263,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
           <button
             type="button"
             onClick={handleStart}
-            className="action-circle-btn btn-neon-yellow"
+            className="action-circle-btn btn-neon-green"
             title="Start 15-Minute Focus"
             aria-label="Start Focus"
           >

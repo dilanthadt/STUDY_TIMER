@@ -89,8 +89,8 @@ export const PermanentStopwatch: React.FC<PermanentStopwatchProps> = ({
   return (
     <div className="mini-stopwatch-section">
       <div className="stopwatch-digits-row" onClick={toggleRunning} title="Click to Pause/Resume">
-        <span className="stopwatch-main-digits neon-green">{main}</span>
-        <span className="stopwatch-ms-digits neon-green-dim">{ms}</span>
+        <span className="stopwatch-main-digits neon-cyan">{main}</span>
+        <span className="stopwatch-ms-digits neon-cyan-dim">{ms}</span>
       </div>
 
       <div className="stopwatch-unit-labels">
@@ -103,7 +103,7 @@ export const PermanentStopwatch: React.FC<PermanentStopwatchProps> = ({
         <button
           type="button"
           onClick={toggleRunning}
-          className={`mini-circle-btn ${isRunning ? 'running' : 'paused'}`}
+          className={`mini-circle-btn btn-cyan ${isRunning ? 'running' : 'paused'}`}
           title={isRunning ? 'Pause Stopwatch' : 'Resume Stopwatch'}
           aria-label={isRunning ? 'Pause Stopwatch' : 'Resume Stopwatch'}
         >
