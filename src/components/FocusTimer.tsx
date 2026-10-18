@@ -16,10 +16,13 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
   const [timerState, setTimerState] = useState<'idle' | 'running' | 'paused' | 'completed'>('idle');
 
   const [remainingSeconds, setRemainingSeconds] = useState<number>(FOCUS_DURATION_SECONDS);
+  const [overtimeSeconds, setOvertimeSeconds] = useState<number>(0);
   const startTimeRef = useRef<number | null>(null);
   const accumulatedElapsedRef = useRef<number>(0);
   const intervalRef = useRef<number | null>(null);
   const sessionStartIsoRef = useRef<string>('');
+  const overtimeStartTimestampRef = useRef<number | null>(null);
+  const hasFinishedChimePlayedRef = useRef<boolean>(false);
 
   const recordSession = useCallback(
     (status: SessionStatus, finalElapsed: number) => {
@@ -56,6 +59,10 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
     setHasError(false);
 
     startTimeRef.current = Date.now();
+    overtimeStartTimestampRef.current = null;
+    hasFinishedChimePlayedRef.current = false;
+    setOvertimeSeconds(0);
+
     if (timerState === 'idle') {
       sessionStartIsoRef.current = new Date().toISOString();
       accumulatedElapsedRef.current = 0;
@@ -95,12 +102,25 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
 
     accumulatedElapsedRef.current = 0;
     startTimeRef.current = null;
+    overtimeStartTimestampRef.current = null;
+    hasFinishedChimePlayedRef.current = false;
     setRemainingSeconds(FOCUS_DURATION_SECONDS);
+    setOvertimeSeconds(0);
     setTimerState('idle');
   };
 
   const handleFinishEarly = () => {
-    clearIntervalTimer();
+    // If overtime is already running, clicking Done again should stop everything
+    if (overtimeSeconds > 0) {
+      clearIntervalTimer();
+      startTimeRef.current = null;
+      accumulatedElapsedRef.current = 0;
+      setOvertimeSeconds(0);
+      setRemainingSeconds(FOCUS_DURATION_SECONDS);
+      setTimerState('completed');
+      return;
+    }
+
     let currentElapsed = accumulatedElapsedRef.current;
     if (timerState === 'running' && startTimeRef.current) {
       currentElapsed += (Date.now() - startTimeRef.current) / 1000;
@@ -108,11 +128,14 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
 
     playCompletionChime();
     recordSession('completed', currentElapsed);
+    hasFinishedChimePlayedRef.current = true;
 
-    accumulatedElapsedRef.current = 0;
-    startTimeRef.current = null;
+    // Immediately start extra time count-up from 0 right in the timer
+    accumulatedElapsedRef.current = FOCUS_DURATION_SECONDS;
+    startTimeRef.current = Date.now();
     setRemainingSeconds(0);
-    setTimerState('completed');
+    setOvertimeSeconds(0.01);
+    setTimerState('running');
   };
 
   const handleCancel = () => {
@@ -128,20 +151,28 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
 
     accumulatedElapsedRef.current = 0;
     startTimeRef.current = null;
+    overtimeStartTimestampRef.current = null;
+    hasFinishedChimePlayedRef.current = false;
     setRemainingSeconds(FOCUS_DURATION_SECONDS);
+    setOvertimeSeconds(0);
     setTimerState('idle');
   };
 
   const handleNextBlock = () => {
+    clearIntervalTimer();
     setTimerState('idle');
     setRemainingSeconds(FOCUS_DURATION_SECONDS);
+    setOvertimeSeconds(0);
     accumulatedElapsedRef.current = 0;
     startTimeRef.current = null;
+    overtimeStartTimestampRef.current = null;
+    hasFinishedChimePlayedRef.current = false;
     setTaskTitle('');
     setHasError(false);
   };
 
-  // High-frequency countdown loop with millisecond precision
+  // High-frequency loop with millisecond precision
+  // When 15min completes: plays chime, automatically starts counting extra time right in this timer!
   useEffect(() => {
     if (timerState !== 'running') {
       clearIntervalTimer();
@@ -153,17 +184,22 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
       const now = Date.now();
       const deltaSec = (now - startTimeRef.current) / 1000;
       const totalElapsed = accumulatedElapsedRef.current + deltaSec;
-      const remaining = Math.max(0, FOCUS_DURATION_SECONDS - totalElapsed);
 
-      setRemainingSeconds(remaining);
+      if (totalElapsed < FOCUS_DURATION_SECONDS) {
+        // Normal 15-minute countdown
+        const remaining = Math.max(0, FOCUS_DURATION_SECONDS - totalElapsed);
+        setRemainingSeconds(remaining);
+      } else {
+        // 15-minute timer is OVER: seamlessly count up extra time in real-time
+        if (!hasFinishedChimePlayedRef.current) {
+          playCompletionChime();
+          recordSession('completed', FOCUS_DURATION_SECONDS);
+          hasFinishedChimePlayedRef.current = true;
+        }
 
-      if (remaining <= 0) {
-        clearIntervalTimer();
-        playCompletionChime();
-        recordSession('completed', FOCUS_DURATION_SECONDS);
-        setTimerState('completed');
-        accumulatedElapsedRef.current = 0;
-        startTimeRef.current = null;
+        const extraTime = totalElapsed - FOCUS_DURATION_SECONDS;
+        setRemainingSeconds(0);
+        setOvertimeSeconds(extraTime);
       }
     }, 35);
 
@@ -172,11 +208,21 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
     };
   }, [timerState, recordSession]);
 
-  const { main, ms } = formatCountdownWithMs(remainingSeconds);
-  const isEndingSoon = timerState === 'running' && remainingSeconds > 0 && remainingSeconds <= 60;
+  const isOvertime = overtimeSeconds > 0;
+  const activeSeconds = isOvertime ? overtimeSeconds : remainingSeconds;
+  const { main, ms } = formatCountdownWithMs(activeSeconds);
+  const displayMain = isOvertime ? `+${main}` : main;
+  const isEndingSoon = !isOvertime && timerState === 'running' && remainingSeconds > 0 && remainingSeconds <= 60;
 
-  // Calculate dynamic color transition: Green (900s) -> Yellow (450s) -> Orange/Red (60s)
+  // Calculate dynamic color transition: Green (900s) -> Yellow (450s) -> Orange/Red (60s) -> Overtime (Neon Red)
   const getTimerColorStyle = () => {
+    if (isOvertime) {
+      return {
+        color: '#ff2244',
+        textShadow: '0 0 10px rgba(255, 34, 68, 0.65), 0 0 18px rgba(255, 34, 68, 0.4)',
+      };
+    }
+
     if (timerState === 'idle') {
       return {
         color: '#00ff66',
@@ -241,10 +287,10 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
         />
       </div>
 
-      {/* 15:00 Countdown Digits with Milliseconds (Green -> Yellow -> Red gradient, Blinks Red at end) */}
+      {/* 15:00 Countdown Digits that seamlessly become Extra Time Stopwatch directly in the same digits */}
       <div className={`mini-countdown-digits-row ${isEndingSoon ? 'blink-red' : ''}`}>
         <span className="countdown-main-digits" style={timerColorStyle}>
-          {main}
+          {displayMain}
         </span>
         <span
           className="countdown-ms-digits"
@@ -267,7 +313,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
             title="Start 15-Minute Focus"
             aria-label="Start Focus"
           >
-            <Play size={14} fill="currentColor" />
+            <Play size={10} fill="currentColor" />
           </button>
         )}
 
@@ -280,7 +326,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
               title="Pause"
               aria-label="Pause"
             >
-              <Pause size={13} />
+              <Pause size={9} />
             </button>
             <button
               type="button"
@@ -289,7 +335,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
               title="Finish Early (Completed)"
               aria-label="Finish Early"
             >
-              <Check size={13} />
+              <Check size={9} />
             </button>
             <button
               type="button"
@@ -298,7 +344,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
               title="Reset"
               aria-label="Reset"
             >
-              <RotateCcw size={12} />
+              <RotateCcw size={9} />
             </button>
           </>
         )}
@@ -312,7 +358,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
               title="Resume"
               aria-label="Resume"
             >
-              <Play size={13} fill="currentColor" />
+              <Play size={9} fill="currentColor" />
             </button>
             <button
               type="button"
@@ -321,7 +367,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
               title="Cancel session"
               aria-label="Cancel"
             >
-              <X size={13} />
+              <X size={9} />
             </button>
             <button
               type="button"
@@ -330,7 +376,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
               title="Reset"
               aria-label="Reset"
             >
-              <RotateCcw size={12} />
+              <RotateCcw size={9} />
             </button>
           </>
         )}
@@ -342,7 +388,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({ onSessionLogged }) => {
             className="action-pill-btn btn-neon-yellow"
             title="Start next block"
           >
-            <Play size={12} fill="currentColor" />
+            <Play size={9} fill="currentColor" />
             <span>Next Sprint</span>
           </button>
         )}
